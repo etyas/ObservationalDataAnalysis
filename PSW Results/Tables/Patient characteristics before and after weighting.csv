@@ -1,0 +1,5 @@
+"Group","N/ESS","Sex_0_bin","Sex_1_bin","Smoke_0_bin","Smoke_1_bin","Age_mean","wt","Analysis"
+"Data 1",200,53.5,46.5,48,52,41.57,1,"Unweighted"
+"Data 2",300,47.67,52.33,50,50,34.91,0.67,"Unweighted"
+"Data 1",200,53.5,46.5,48,52,41.57,1,"Weighted"
+"Data 2",261.4,48.3,51.7,52.82,47.18,42.93,0.77,"Weighted"
