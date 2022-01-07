@@ -12,45 +12,34 @@ message("PREAMBLE: PACKAGES, PATHS, AND FUNCTIONS")
 ## Import packages
 message("Load packages and data")
 
-library(dplyr)
-library(survival)
-# library(devtools)
-# devtools::install_github("ngreifer/WeightIt")
-library(WeightIt)
-# install.packages("cobalt")
-library(cobalt)
-library(ggplot2)
-library(survtools)
-library(survminer)
-library(table1)
-library(tibble)
-library(rvest)
-library(xlsx)
-library(fastDummies)
-library(tidyr)
-## Check that all of these libraries are used
-
-
+packages <- c("tidyverse", "table1", "rvest", "fastDummies", "cobalt",
+              "WeightIt")
+lapply(packages, library, character.only = TRUE)
 
 ## BresMed Colours
 message("BresMed Colours")
 
 BM.blue = rgb(69, 185, 209, max=255)
-BM.red = rgb(225, 55, 60, max=255)
-BM.yellow = rgb(238, 224, 30, max=255)
 BM.pink = rgb(211,78,147,max=255)
-BM.lightPink<-rgb(229,151,192,max=255)
 
-
-
-## File path
+## File paths
 message("Set file paths")
 
-base.dir <- "G:/Clients/BresMed (internal)/3454 Capability enhancement for updated NICE methods/Project/Observational data/Code/GitHub/PSWDemoExample"
+base.dir <- "C:/Users/etyas/OneDrive - Enterprise/Documents/GitHub/ObservationalDataAnalysis-main"
 data.dir <- file.path(base.dir, "Simulated datasets")
 res.dir <- file.path(base.dir, "PSW Results")
+
+# Create folders if needed
 if(!dir.exists(res.dir)){
   dir.create(res.dir, recursive = TRUE)
+}
+
+if(!dir.exists(file.path(res.dir, "Plots"))){
+  dir.create(file.path(res.dir, "Plots"), recursive = TRUE)
+}
+
+if(!dir.exists(file.path(res.dir, "Tables"))){
+  dir.create(file.path(res.dir, "Tables"), recursive = TRUE)
 }
 
 # output.file <- file.path(res.dir, paste0("Output tables.xlsx"))
@@ -77,7 +66,7 @@ Continuous.characteristics <- c("Age")
 # Select the categorical characteristics for inclusion in propensity score
 # calculation separately as these require more formatting than continuous
 # variables
-Categoricals.characteristics <- c("Sex", "Smoke")
+Categorical.characteristics <- c("Sex", "Smoke")
 # Select variable that specifies the two groups that should be balanced over
 # i.e. this will probably be a variable that states the source of the data
 Group.variable <- "GROUP"
@@ -87,7 +76,8 @@ Group.variable <- "GROUP"
 Other.variables <- c("Treatment", "Outcome")
 
 # Derive formula for propensity score calculation
-Characteristics <- c(Continuous.characteristics, Categoricals.characteristics)
+Characteristics <- c(Continuous.characteristics, Categorical.characteristics)
+RHS <- Characteristics[1]
 for(i in 2:length(Characteristics)){
   RHS <- paste(RHS, Characteristics[i], sep = " + ")
 }
@@ -105,7 +95,7 @@ data1.select <- Data1 %>%
   rename(Treatment = Group) %>%
   select(all_of(Group.variable),
          all_of(Continuous.characteristics),
-         all_of(Categoricals.characteristics),
+         all_of(Categorical.characteristics),
          all_of(Other.variables))
 
 data2.select <- Data2 %>%
@@ -113,7 +103,7 @@ data2.select <- Data2 %>%
   rename(Treatment = Group) %>%
   select(all_of(Group.variable),
          all_of(Continuous.characteristics),
-         all_of(Categoricals.characteristics),
+         all_of(Categorical.characteristics),
          all_of(Other.variables))
 
 # Merge data sets together
@@ -122,31 +112,29 @@ data <- full_join(data1.select, data2.select)
 
 # Check whether there are any missing data in your weighting variables
 input <- as.formula(paste0("~", RHS, "| GROUP"))
-char.table.before.weighting <- table1(input, data = data)
-char.table.before.weighting
-###OUTPUT TABLE?
-char.table.before.weighting.dataframe <- as.data.frame(read_html(char.table.before.weighting) %>% html_table(fill=TRUE))
-
-# You could impute the information or set the variable to have "Missing" factor
-
+(char.table.before.weighting <- table1(input, data = data))
+char.table.before.weighting.dataframe <- as.data.frame(read_html(char.table.before.weighting)
+                                                       %>% html_table(fill=TRUE))
+# If you have missing data you could impute the information or set the variable
+# to have "Missing" factor
 
 # Set the factor variables as 0 or 1 for each level
 df <- data %>%
   rename(Group = all_of(Group.variable)) %>%
   select(Group, all_of(Continuous.characteristics), 
-         all_of(Categoricals.characteristics),
+         all_of(Categorical.characteristics),
          all_of(Other.variables)) %>%
-  dummy_cols(select_columns = Categoricals.characteristics) # ensure data is called df
+  dummy_cols(select_columns = Categorical.characteristics) # ensure data is called df
 
 colnames(df)
 
-# Formatted names for balance plots
-new.names <- c(`Sex_0` = "Sex (Female)",
-               `Sex_1` = "Sex (Male)",
-               `Smoke_0` = "Smoker (No)",
-               `Smoke_1` = "Smoker (Yes)"
+# Format binary characteristic names for balance plots
+formatted.names <- data.frame(name = colnames(df)[which(grepl("_", colnames(df)))],
+                              formatted = c("Sex (Female)",
+                                            "Sex (Male)",
+                                            "Smoker (No)",
+                                            "Smoker (Yes)")
 )
-
 
 
 # Set input options for propensity score calculation ----------------------
@@ -214,17 +202,14 @@ missing <- "ind"
 
 # DO NOT EDIT FROM HERE ---------------------------------------------------
 
-# Assess balance before matching ------------------------------------------
-message("Assess balance before matching")
+# Assess balance before weighting ------------------------------------------
+message("Assess balance before weighting")
 
-balance.before.weighting <- bal.tab(Formula, data = df,
+(balance.before.weighting <- bal.tab(Formula, data = df,
                                    estimand = estimand,
-                                   thresholds = c(m = .1, v = 2)
+                                   thresholds = c(m = threshold, v = v.threshold)
                                    )$Balance[,c(1,2,3,5)] %>%
-  as.data.frame()
-
-## WRITE OUT
-
+  as.data.frame())
 
 
 # Fit propensity score model, generate balancing weights ------------------
@@ -239,9 +224,6 @@ weighting <- weightit(formula = Formula, data = df,
 # Bind weights and propensity scores to analysis dataset 
 df.weights <- df %>% mutate(wt = weighting$weights,
                             ps = weighting$ps)
-
-## WRITE OUT
-
 
 
 # Propensity score model diagnostics --------------------------------------
@@ -258,41 +240,18 @@ Measure <- data.frame(Measure = c("Min", "Max",
                                   "Greatest 1", "Greatest 2", "Greatest 3",
                                   "Greatest 4", "Greatest 5",
                                   "ESS Unweighted", "ESS Weighted"))
+
 ESS <- as.data.frame(weight.summary$effective.sample.size) %>% 
   remove_rownames() %>%
-  rename(Data.1 = `Data 1`, Data.2 = `Data 2`) # this isn't standardised
+  rename_with(make.names)
+
 weight.summary.table <- rbind(as.data.frame(weight.summary$weight.range),
                               as.data.frame(weight.summary$weight.top)) %>%
-  rbind(ESS) %>% cbind(Measure) %>% select(Measure, Data.1, Data.2) # this isn't standardised
+  rbind(ESS) %>% cbind(Measure) %>% select(Measure, everything())
 
-## WRITE OUT
-
-message("Propensity score histogram")
-
-ps_hist <- ggplot(df.weights, aes(x = ps)) +
-  geom_histogram(aes(fill = Group), binwidth=0.05, alpha = 0.4, position="identity", color = "black") +
-  scale_color_manual(values = c(BM.blue, BM.pink)) +
-  scale_fill_manual(values = c(BM.blue, BM.pink)) +
-  ggtitle("Histogram of propensity scores by study") +
-  scale_x_continuous(breaks = seq(0,1,0.25)) +
-  scale_y_continuous(expand = expansion(add = c(0, 2))) +
-  xlab("Propensity score") +
-  ylab("Number of patients") +
-  theme_bw() +
-  theme(legend.title = element_blank(),
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        axis.title = element_text(size=14),
-        axis.text = element_text(size=12),
-        title = element_text(size = 14),
-        legend.text = element_text(size = 12))
-ps_hist
-
-# Save propensity scores
-jpeg(file.path(output.dir, "plots/Histogram of propensity scores.jpg"), width = 25, height = 15,
-     units = 'cm', res = 300, quality=100)
-ps_hist
-graphics.off()
+# Save output
+write.csv(weight.summary.table, file.path(res.dir, "Tables/Weight summary.csv"),
+          row.names = F)
 
 
 message("Weight histogram")
@@ -302,7 +261,8 @@ hist.data.wt <- df.weights %>%
   mutate(n = n(),
          wt.type = paste0("Weights (sum = ", round(sum(wt),0), ")"))
 
-ESS.adjusted <- weight.summary.table[weight.summary.table$Measure == "ESS Weighted","Data.2"] # not standardised
+ESS.adjusted <- weight.summary.table[weight.summary.table$Measure == "ESS Weighted",
+                                     gsub(" ", ".", setdiff(unique(df$Group), focal))]
 
 hist.data.rescaled.wt <- df.weights %>%
   filter(Group != focal) %>%
@@ -312,7 +272,7 @@ hist.data.rescaled.wt <- df.weights %>%
 
 weights.data.long <- rbind(hist.data.wt, hist.data.rescaled.wt)
 
-wt_hist <- ggplot(weights.data.long) +
+(wt_hist <- ggplot(weights.data.long) +
   geom_histogram(aes(x = wt), color = "black", fill = BM.blue, alpha = 0.6, position="identity") +
   scale_color_manual(values = c(BM.blue, BM.pink)) +
   scale_fill_manual(values = c(BM.blue, BM.pink)) +
@@ -322,56 +282,84 @@ wt_hist <- ggplot(weights.data.long) +
   ylab("Number of patients") +
   facet_grid(~wt.type, scales = "free_x") +
   theme_bw() +
-  theme(panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        axis.title = element_text(size=14),
+  theme(axis.title = element_text(size=14),
         axis.text = element_text(size=12),
         title = element_text(size = 14),
         legend.text = element_text(size = 12),
-        strip.text = element_text(size = 12))
-wt_hist
+        strip.text = element_text(size = 12)))
 
 # Save weights
-jpeg(file.path(output.dir, "plots/Histogram of weights.jpg"), width = 25, height = 15,
+jpeg(file.path(res.dir, "Plots/Histogram of weights.jpg"), width = 25, height = 15,
      units = 'cm', res = 300, quality=100)
 wt_hist
 graphics.off()
 
 
+message("Propensity score density plot before and after weighting")
+
+ps_plot_dataset <- df.weights %>%
+  mutate(wt = 1,
+         status = "Before weighting") %>%
+  rbind(df.weights %>% mutate(status = "After weighting"))
+ps_plot_dataset$status <- factor(ps_plot_dataset$status, levels = c("Before weighting", "After weighting"))
+  
+(ps_plot <- ggplot(ps_plot_dataset, aes(x = ps, weights = wt)) +
+    geom_density(aes(fill = Group), alpha = 0.4, position="identity", color = "black") +
+    scale_color_manual(values = c(BM.blue, BM.pink)) +
+    scale_fill_manual(values = c(BM.blue, BM.pink)) +
+    ggtitle("Propensity score distribution") +
+    scale_x_continuous(breaks = seq(0,1,0.25), limits = c(0,1)) +
+    xlab("Propensity score") +
+    ylab("Density") +
+    theme_bw() +
+    theme(legend.title = element_blank(),
+          axis.title = element_text(size=14),
+          axis.text = element_text(size=12),
+          title = element_text(size = 14),
+          legend.text = element_text(size = 12),
+          strip.text = element_text(size = 12)) +
+  facet_wrap("status"))
+
+# Save propensity scores
+jpeg(file.path(res.dir, "Plots/Propensity score density plot.jpg"), width = 25, height = 15,
+     units = 'cm', res = 300, quality=100)
+ps_plot
+graphics.off()
+
+
 message("Balance table after weighting")
 
-balance.after.weighting <- bal.tab(weighting, thresholds = c(m = .1, v = 2)
+balance.after.weighting <- bal.tab(weighting, thresholds = c(m = threshold, v = v.threshold)
                                    )$Balance[,c(1,4,5,7)] %>%
   as.data.frame()
 
 balance.table <- merge(balance.before.weighting, balance.after.weighting, by = c(0), all = TRUE)
 names(balance.table) <- c("Characteristic", "Type", 
-                          "Unadjusted Difference", "Unadjusted Mean Balance", "Unadjusted Variance Ratio Balance",
-                          "Type2", "Adjusted Difference", "Adjusted Mean Balance", "Adjusted Variance Ratio Balance")
-balance.table <- balance.table %>% select(!Type2)
+                          "Unadjusted Difference", "Unadjusted Mean Balance",
+                          "Unadjusted Variance Ratio Balance",
+                          "Type2", "Adjusted Difference", "Adjusted Mean Balance",
+                          "Adjusted Variance Ratio Balance")
+(balance.table.output <- balance.table %>% select(!Type2) %>% arrange(Type))
 
-## WRITE OUT
+# Save output
+write.csv(balance.table.output, file.path(res.dir, "Tables/Balance table.csv"),
+          row.names = F)
 
-# Baseline_summary_bin_weighted <- df.weights %>%
-#   select(-all_of(Continuous.characteristics), -all_of(Categoricals.characteristics), -all_of(Other.variables), -ps) %>%
-#   dplyr::group_by(Group) %>%
-#   summarise_each(funs(weighted.mean(.*100, wt)), -wt)  %>%
-#   mutate(Analysis = "Weighted") %>%
-#   left_join(select(ESS_forcombining, Group,`N/ESS` = Adjusted), by = "Group")
-# 
-# Baseline_summary_bin_nonweighted <- df.weights %>%
-#   select(-all_of(Characteristics), -all_of(OutcomeNames), -ps, -wt) %>%
-#   dplyr::group_by(Group) %>%
-#   summarise_each(funs(mean(.*100)))  %>%
-#   mutate(Analysis = "Non weighted") %>%
-#   left_join(select(ESS_forcombining, Group, `N/ESS` = Unadjusted), by = "Group")
-# 
-# Baseline_summary_bin_all <- bind_rows(Baseline_summary_bin_weighted, Baseline_summary_bin_nonweighted)   %>%
-#   select(Analysis, Group, `N/ESS`, everything())
+message("Patient characteristics before and after weighting")
 
 #Summary of weighted data, weighted means etc
+N_ESS_tab <- as.data.frame(t(ESS)) %>%
+  rownames_to_column() %>%
+  mutate(rowname = gsub("\\.", " ", rowname)) %>%
+  rename(Group = rowname, Unweighted = V1, Weighted = V2) %>%
+  pivot_longer(cols = -Group, values_to = "N/ESS", names_to = "Analysis")
+
 base.summ.wt <- df.weights %>% 
-  select(-all_of(Continuous.characteristics), -all_of(Categoricals.characteristics), -all_of(Other.variables), -ps) %>%
+  select(-all_of(Continuous.characteristics), -all_of(Categorical.characteristics),
+         -all_of(Other.variables), -ps) %>%
+  rename_at(vars(-Group, -wt), ~ paste0(.x, "_bin")) %>%
+  cbind(select(df.weights, all_of(Continuous.characteristics)) %>%
+          rename_all(~ paste0(.x, "_mean"))) %>%
   dplyr::group_by(Group) %>%
   summarise(across(.cols = everything(), ~weighted.mean(., wt, na.rm = TRUE)),) %>%
   mutate(across(.cols = ends_with('_bin'), ~.*100), .keep = 'unused') %>%
@@ -380,176 +368,121 @@ base.summ.wt <- df.weights %>%
 
 #Summary of unweighted data, means etc
 base.summ.uwt <- df.weights %>% 
-  select(-all_of(Continuous.characteristics), -all_of(Categoricals.characteristics), -all_of(Other.variables), -ps) %>%
+  select(-all_of(Continuous.characteristics), -all_of(Categorical.characteristics),
+         -all_of(Other.variables), -ps) %>%
+  rename_at(vars(-Group, -wt), ~ paste0(.x, "_bin")) %>%
+  cbind(select(df.weights, all_of(Continuous.characteristics)) %>%
+          rename_all(~ paste0(.x, "_mean"))) %>%
   dplyr::group_by(Group) %>%
   summarise(across(.cols = everything(), ~mean(., na.rm = TRUE)),) %>%
   mutate(across(.cols = ends_with('_bin'), ~.*100), .keep = 'unused') %>%
   mutate(across(.cols = where(is.numeric), ~round(., 2)), .keep = 'unused') %>%
-  mutate(Analysis = "Weighted")
+  mutate(Analysis = "Unweighted")
+  
 
-base.summ.all <- bind_rows(base.summ.wt, base.summ.uwt)%>%
-  as.data.frame()
+(base.summ.all <- bind_rows(base.summ.uwt, base.summ.wt)%>%
+  as.data.frame() %>%
+    left_join(N_ESS_tab) %>%
+    mutate(`N/ESS` = round(`N/ESS`, 1)) %>%
+    select(Group, `N/ESS`, everything(), -wt, -Analysis, wt, Analysis))
 
-## NEEDS TO BE ADJUSTED SUCH THAT WEIGHTED SUMMARY OF CONTINUOUS VARIABLES ARE INCLUDED AND ADD THE `N/ESS` COLUMN
+# Save output
+write.csv(base.summ.all,
+          file.path(res.dir, "Tables/Patient characteristics before and after weighting.csv"),
+          row.names = F)
 
-## WE NEED TO CREATE OUTPUT
+# Plots for assessing balance
 
-## WE NEED TO STANDARDISED SOME BITS FLAGGED ABOVE AND LOVEPLOTS AND BALANCE PLOTS
+message("Produce plot to assess covariate balance")
+(love.plot <- love.plot(weighting,
+                          threshold = c(m = threshold),
+                          drop.distance = TRUE,
+                          stars = "raw",
+                          abs = TRUE,
+                          grid = FALSE,
+                          wrap = 100,
+                          sample.names = c("Unweighted", "Weighted"),
+                          position = "top",
+                          shapes = c("circle", "triangle"),
+                          colors = c(BM.blue, BM.pink),
+                          var.names = t(column_to_rownames(formatted.names, 'name'))
+                        ) +
+  ggtitle("") +
+  xlab("Absolute standardized mean differences") +
+  theme(legend.title = element_blank(),
+        axis.title = element_text(size=14),
+        axis.text = element_text(size=12),
+        title = element_text(size = 14),
+        legend.text = element_text(size = 12)))
 
-# 
-# 
-# # Save dataset with PS weights --------------------
-# # Add standardized weights to data set
-# df.weights <- df.weights %>%
-#   mutate(ESS = ifelse(Group == focal, ESS.adjusted[[focal]],
-#                       ifelse(Group == setdiff(colnames(ESS.adjusted), c("TYPE", focal)), ESS.adjusted[[setdiff(colnames(ESS.adjusted), c("TYPE", focal))]], NA))) %>%
-#   group_by(Group) %>%
-#   mutate(wt.standardized.ESS = (wt * ESS) / sum(wt))
-# 
-# # check weights (sum should equal ESS)
-# weights.sum <- df.weights %>%
-#   group_by(Group, ESS) %>%
-#   summarize(check = sum(wt.standardized.ESS))
-# 
-# write.csv(df.weights, file.path(output.dir, "PLD with weights.csv"), row.names = F)
-# 
-# # Save Diagnostics
-# write.csv(balance.table, file.path(output.dir, "Balance Statistics.csv"), row.names = F)
-# write.csv(Baseline_summary_bin_all, file.path(output.dir, "Baseline summary weighted and non weighted.csv"), row.names = F)
-# 
-# 
-# # Balance plots
-# # Absolute mean differences
-# 
-# love.plot.MD <- love.plot(weighting,
-#                           #line = TRUE,
-#                           stats = c("mean.diffs"),
-#                           threshold = c(m = threshold),
-#                           drop.distance = TRUE,
-#                           binary = "raw",
-#                           abs = TRUE,
-#                           #var.order = "unadjusted",
-#                           limits = c(0, 1),
-#                           grid = FALSE,
-#                           wrap = 100,
-#                           #sample.names = c("Unmatched", "Matched"),
-#                           position = "top",
-#                           shapes = c("circle", "triangle"),
-#                           colors = c(BM.blue, BM.pink),
-#                           var.names = new.names) +
-#   ggtitle("") +
-#   xlab("Absolute mean differences") +
-#   theme(legend.title = element_blank(),
-#         axis.title = element_text(size=14),
-#         axis.text = element_text(size=12),
-#         title = element_text(size = 14),
-#         legend.text = element_text(size = 12))
-# 
-# love.plot.MD
-# 
-# jpeg(file.path(output.dir, "plots/Covariate balance absolute MD.jpg"), width = 25, height = 15,
-#      units = 'cm', res = 300, quality=100)
-# love.plot.MD
-# graphics.off()
-# 
-# 
-# 
-# # Absolute standardised mean differences
-# love.plot.SMD <- love.plot(weighting,
-#                            #line = TRUE,
-#                            stats = c("mean.diffs"),
-#                            threshold = c(m = threshold),
-#                            drop.distance = TRUE,
-#                            binary = "std",
-#                            abs = TRUE,
-#                            #var.order = "unadjusted",
-#                            limits = c(0, 1),
-#                            grid = FALSE,
-#                            wrap = 100,
-#                            #sample.names = c("Unmatched", "Matched"),
-#                            position = "top",
-#                            shapes = c("circle", "triangle"),
-#                            colors = c(BM.blue, BM.pink),
-#                            var.names = new.names) +
-#   ggtitle("") +
-#   xlab("Absolute standardised mean differences") +
-#   theme(legend.title = element_blank(),
-#         axis.title = element_text(size=14),
-#         axis.text = element_text(size=12),
-#         title = element_text(size = 14),
-#         legend.text = element_text(size = 12))
-# 
-# love.plot.SMD
-# 
-# jpeg(file.path(output.dir, "plots/Covariate balance absolute SMD.jpg"), width = 25, height = 15,
-#      units = 'cm', res = 300, quality=100)
-# love.plot.SMD
-# graphics.off()
-# 
-# 
-# 
-# # Balance plots
-# bal.plots.data <- pivot_longer(Baseline_summary_bin_all, cols = colnames(Baseline_summary_bin_all)[4:length(colnames(Baseline_summary_bin_all))]) %>%
-#   mutate(var = ifelse(grepl("AGE", name), "Age",
-#                       ifelse(grepl("MUFC", name), "mUFC",
-#                              ifelse(grepl("TIMEDIAG", name), "Time since diagnosis",
-#                                     ifelse(grepl("IIRD", name), "Prior irridation",
-#                                            ifelse(grepl("MED", name), "Prior medications",
-#                                                   ifelse(grepl("RACE", name), "Race", "Prior surgery")))))),
-#          x = gsub(".*_", "", name),
-#          x = ifelse(x == "2.0 x ULN to <5.0 x ULN", "2.0 x ULN to\n<5.0 x ULN", x),
-#          x = ifelse(x == "Yes (over 43 months ago)", "Yes\n(>=43 months)",
-#                     ifelse(x == "Yes (within 43 months)", "Yes\n(<43 months)", x)),
-#          x = gsub("<", "< ", x),
-#          x = gsub(">=", "\u2265 ", x),
-#          Group = ifelse(grepl("LINC-3", Group), "Osilodrostat\n(LINC-3)", "Pasireotide LAR \n(Lacroix 2018)"))
-# 
-# 
-# 
-# # mUFC
-# jpeg(file.path(output.dir, "plots/MUFC distribution.jpg"), width = 25, height = 15,
-#      units = 'cm', res = 300, quality=100)
-# 
-# ggplot(filter(bal.plots.data, var == "mUFC")) +
-#   geom_col(aes(x = factor(x, level = c("< 2.0 x ULN", "2.0 x ULN to\n< 5.0 x ULN", "\u2265 5.0 x ULN", "Missing")), y = value, fill = Group), position = "dodge", alpha = 0.6, color = "black") +
-#   scale_fill_manual(values = c(BM.blue, BM.pink)) +
-#   scale_color_manual(values = c(BM.blue, BM.pink)) +
-#   ylab("Proportion of patients (%)") +
-#   xlab("mUFC (nmol/24h)") +
-#   facet_wrap("Analysis") +
-#   theme_bw() +
-#   theme(panel.grid.major = element_blank(),
-#         panel.grid.minor = element_blank(),
-#         axis.title = element_text(size=14),
-#         axis.text = element_text(size=10),
-#         title = element_text(size = 14),
-#         legend.text = element_text(size = 12),
-#         strip.text = element_text(size = 12))
-# 
-# graphics.off()
-# 
-# 
-# # Age cat
-# jpeg(file.path(output.dir, "plots/Age distribution.jpg"), width = 25, height = 15,
-#      units = 'cm', res = 300, quality=100)
-# 
-# 
-# ggplot(filter(bal.plots.data, var == "Age")) +
-#   geom_col(aes(x = factor(x, levels = c("< 40 years", "40 to < 60 years", "\u2265 60 years")), y = value, fill = Group), position = "dodge", alpha = 0.6, color = "black") +
-#   scale_fill_manual(values = c(BM.blue, BM.pink)) +
-#   scale_color_manual(values = c(BM.blue, BM.pink)) +
-#   ylab("Proportion of patients (%)") +
-#   xlab("Age") +
-#   facet_wrap("Analysis") +
-#   theme_bw() +
-#   theme(panel.grid.major = element_blank(),
-#         panel.grid.minor = element_blank(),
-#         axis.title = element_text(size=14),
-#         axis.text = element_text(size=12),
-#         title = element_text(size = 14),
-#         legend.text = element_text(size = 12),
-#         strip.text = element_text(size = 12))
-# 
-# graphics.off()
-# 
-# 
+jpeg(file.path(res.dir, "Plots/Covariate balance Love plot.jpg"), width = 20, height = 15,
+     units = 'cm', res = 300, quality=100)
+love.plot
+graphics.off()
+
+
+message("Produce balance plots for binary characteristics")
+
+# Balance plots
+balance.plot.data <- base.summ.all %>%
+  select(-ends_with("mean")) %>%
+  pivot_longer(cols = ends_with("bin")) %>%
+  mutate(name = sub("_bin", "", name)) %>%
+  left_join(formatted.names, by = "name") %>%
+  mutate(input.var = gsub("\\_.*","", name),
+         var = gsub("\\ .*","", formatted),
+         level = sub(".*\\(","", formatted),
+         level = sub(")","", level))
+
+balance.plot.data[balance.plot.data$Analysis == "Unweighted",]$Analysis <- "Before weighting"
+balance.plot.data[balance.plot.data$Analysis == "Weighted",]$Analysis <- "After weighting"
+
+
+for(i in 1:length(Categorical.characteristics)){
+  
+  bal.plot.var <- filter(balance.plot.data, input.var == Categorical.characteristics[i])
+  message(paste0("Produce ", unique(bal.plot.var$var)," balance plot"))
+  
+  bal.plot <- ggplot(bal.plot.var) +
+    geom_col(aes(x = formatted, y = value, fill = Group), position = "dodge",
+             alpha = 0.6, color = "black") +
+    scale_x_discrete(name = unique(bal.plot.var$var),
+                     labels = unique(bal.plot.var$level)) +
+    scale_fill_manual(values = c(BM.blue, BM.pink)) +
+    scale_color_manual(values = c(BM.blue, BM.pink)) +
+    ylab("Proportion of patients (%)") +
+    facet_wrap("Analysis") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.title = element_text(size=14),
+          axis.text = element_text(size=10),
+          title = element_text(size = 14),
+          legend.text = element_text(size = 12),
+          strip.text = element_text(size = 12))
+  
+  jpeg(file.path(res.dir, paste0("Plots/", unique(bal.plot.var$var)," balance plot.jpg")),
+       width = 20, height = 15,
+       units = 'cm', res = 300, quality=100)
+  print(bal.plot)
+  dev.off()
+  
+}
+
+# Output final dataset -----------------------------------------------------
+message("Save dataset with derived weights")
+
+# Add standardized weights to data set
+df.weights.output <- df.weights %>%
+  left_join(select(filter(N_ESS_tab, Analysis == "Weighted"), -Analysis), by = "Group") %>%
+  rename(ESS = `N/ESS`) %>%
+  group_by(Group) %>%
+  mutate(wt.standardized.ESS = (wt * ESS) / sum(wt))
+
+# check weights (sum should equal ESS)
+df.weights.output %>%
+  group_by(Group, ESS) %>%
+  summarize(check = sum(wt.standardized.ESS))
+
+# Save output
+write.csv(df.weights.output, file.path(res.dir, "Tables/PLD with weights.csv"), row.names = F)
