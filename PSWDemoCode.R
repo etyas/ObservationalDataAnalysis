@@ -5,14 +5,13 @@
 # Date: 6 January 2022
 #______________________________________________________________________________________#
 
-
 # PREAMBLE: PACKAGES, PATHS, AND FUNCTIONS --------------------------------
 message("PREAMBLE: PACKAGES, PATHS, AND FUNCTIONS")
 
 ## Import packages
 message("Load packages and data")
 
-packages <- c("tidyverse", "table1", "rvest", "fastDummies", "cobalt",
+packages <- c("tidyverse", "tableone", "rvest", "fastDummies", "cobalt",
               "WeightIt")
 lapply(packages, library, character.only = TRUE)
 
@@ -25,7 +24,7 @@ BM.pink = rgb(211,78,147,max=255)
 ## File paths
 message("Set file paths")
 
-base.dir <- "C:/Users/etyas/OneDrive - Enterprise/Documents/GitHub/ObservationalDataAnalysis-main"
+base.dir <- "C:/Users/etyas/OneDrive - Enterprise/Documents/Standardisation/GitHub/ObservationalDataAnalysis-main_10JAN22"
 data.dir <- file.path(base.dir, "Simulated datasets")
 res.dir <- file.path(base.dir, "PSW Results")
 
@@ -48,13 +47,11 @@ if(!dir.exists(file.path(res.dir, "Tables"))){
 # }
 
 
-
 ## Import data 
 message("Import data")
 
-Data1 <- read.csv(file.path(data.dir, "SimulatedData1.csv"))
-Data2 <- read.csv(file.path(data.dir, "SimulatedData2.csv"))
-
+Data1 <- read.csv(file.path(data.dir, "SimulatedData1_v2.csv"))
+Data2 <- read.csv(file.path(data.dir, "SimulatedData2_v2.csv"))
 
 
 # Choose characteristics for inclusion in PSW -----------------------------
@@ -73,7 +70,7 @@ Group.variable <- "GROUP"
 # Select other variable that you would like to keep in your data set. For
 # example you may wish to keep outcomes in the data sets for easy use in later
 # codes
-Other.variables <- c("Treatment", "Outcome")
+Other.variables <- c("Outcome")
 
 # Derive formula for propensity score calculation
 Characteristics <- c(Continuous.characteristics, Categorical.characteristics)
@@ -90,8 +87,10 @@ Formula <- formula(paste0("Group ~ ", RHS))
 message("Format data sets")
 
 # Select Group.variable and Characteristics
+# Note: group names must not include special characters (spaces are allowed)
 data1.select <- Data1 %>%
-  mutate(GROUP = "Data 1") %>%
+  filter(Group == "A") %>%
+  mutate(GROUP = "TRTA") %>%
   rename(Treatment = Group) %>%
   select(all_of(Group.variable),
          all_of(Continuous.characteristics),
@@ -99,7 +98,8 @@ data1.select <- Data1 %>%
          all_of(Other.variables))
 
 data2.select <- Data2 %>%
-  mutate(GROUP = "Data 2") %>%
+  filter(Group == "C") %>%
+  mutate(GROUP = "TRTC") %>%
   rename(Treatment = Group) %>%
   select(all_of(Group.variable),
          all_of(Continuous.characteristics),
@@ -109,12 +109,13 @@ data2.select <- Data2 %>%
 # Merge data sets together
 data <- full_join(data1.select, data2.select)
 
-
 # Check whether there are any missing data in your weighting variables
-input <- as.formula(paste0("~", RHS, "| GROUP"))
-(char.table.before.weighting <- table1(input, data = data))
-char.table.before.weighting.dataframe <- as.data.frame(read_html(char.table.before.weighting)
-                                                       %>% html_table(fill=TRUE))
+(char.table.before.weighting <- CreateTableOne(vars = Characteristics, strata = Group.variable, factorVars = Categorical.characteristics, data = data))
+
+# Output formatted table (comment out if not required)
+write.csv(print(char.table.before.weighting, showAllLevels = TRUE, formatOptions = list(big.mark = ",")),
+          file.path(res.dir, "Tables/Patient baseline characteristics.csv"))
+
 # If you have missing data you could impute the information or set the variable
 # to have "Missing" factor
 
@@ -128,9 +129,10 @@ df <- data %>%
 
 colnames(df)
 
-# Format binary characteristic names for balance plots
-formatted.names <- data.frame(name = colnames(df)[which(grepl("_", colnames(df)))],
-                              formatted = c("Sex (Female)",
+# Format characteristic names for balance plots
+formatted.names <- data.frame(name = c("Age", colnames(df)[which(grepl("_", colnames(df)))]),
+                              formatted = c("Age (years)",
+                                            "Sex (Female)",
                                             "Sex (Male)",
                                             "Smoker (No)",
                                             "Smoker (Yes)")
@@ -160,7 +162,7 @@ estimand <- "ATT"
 # specifies which group to consider the "treated" or focal group. This group
 # will not be weighted, and the other groups will be weighted to be more like
 # the focal group. Must be non-NULL if estimand = "ATT" or "ATC".
-focal <- "Data 1"
+focal <- "TRTA"
 
 # threshold refers to the difference between the data sets for the specified
 # covariates to assess balance
@@ -391,83 +393,6 @@ write.csv(base.summ.all,
           file.path(res.dir, "Tables/Patient characteristics before and after weighting.csv"),
           row.names = F)
 
-# Plots for assessing balance
-
-message("Produce plot to assess covariate balance")
-(love.plot <- love.plot(weighting,
-                          threshold = c(m = threshold),
-                          drop.distance = TRUE,
-                          stars = "raw",
-                          abs = TRUE,
-                          grid = FALSE,
-                          wrap = 100,
-                          sample.names = c("Unweighted", "Weighted"),
-                          position = "top",
-                          shapes = c("circle", "triangle"),
-                          colors = c(BM.blue, BM.pink),
-                          var.names = t(column_to_rownames(formatted.names, 'name'))
-                        ) +
-  ggtitle("") +
-  xlab("Absolute standardized mean differences") +
-  theme(legend.title = element_blank(),
-        axis.title = element_text(size=14),
-        axis.text = element_text(size=12),
-        title = element_text(size = 14),
-        legend.text = element_text(size = 12)))
-
-jpeg(file.path(res.dir, "Plots/Covariate balance Love plot.jpg"), width = 20, height = 15,
-     units = 'cm', res = 300, quality=100)
-love.plot
-graphics.off()
-
-
-message("Produce balance plots for binary characteristics")
-
-# Balance plots
-balance.plot.data <- base.summ.all %>%
-  select(-ends_with("mean")) %>%
-  pivot_longer(cols = ends_with("bin")) %>%
-  mutate(name = sub("_bin", "", name)) %>%
-  left_join(formatted.names, by = "name") %>%
-  mutate(input.var = gsub("\\_.*","", name),
-         var = gsub("\\ .*","", formatted),
-         level = sub(".*\\(","", formatted),
-         level = sub(")","", level))
-
-balance.plot.data[balance.plot.data$Analysis == "Unweighted",]$Analysis <- "Before weighting"
-balance.plot.data[balance.plot.data$Analysis == "Weighted",]$Analysis <- "After weighting"
-
-
-for(i in 1:length(Categorical.characteristics)){
-  
-  bal.plot.var <- filter(balance.plot.data, input.var == Categorical.characteristics[i])
-  message(paste0("Produce ", unique(bal.plot.var$var)," balance plot"))
-  
-  bal.plot <- ggplot(bal.plot.var) +
-    geom_col(aes(x = formatted, y = value, fill = Group), position = "dodge",
-             alpha = 0.6, color = "black") +
-    scale_x_discrete(name = unique(bal.plot.var$var),
-                     labels = unique(bal.plot.var$level)) +
-    scale_fill_manual(values = c(BM.blue, BM.pink)) +
-    scale_color_manual(values = c(BM.blue, BM.pink)) +
-    ylab("Proportion of patients (%)") +
-    facet_wrap("Analysis") +
-    theme_bw() +
-    theme(panel.grid.major = element_blank(),
-          panel.grid.minor = element_blank(),
-          axis.title = element_text(size=14),
-          axis.text = element_text(size=10),
-          title = element_text(size = 14),
-          legend.text = element_text(size = 12),
-          strip.text = element_text(size = 12))
-  
-  jpeg(file.path(res.dir, paste0("Plots/", unique(bal.plot.var$var)," balance plot.jpg")),
-       width = 20, height = 15,
-       units = 'cm', res = 300, quality=100)
-  print(bal.plot)
-  dev.off()
-  
-}
 
 # Output final dataset -----------------------------------------------------
 message("Save dataset with derived weights")
@@ -486,3 +411,129 @@ df.weights.output %>%
 
 # Save output
 write.csv(df.weights.output, file.path(res.dir, "Tables/PLD with weights.csv"), row.names = F)
+
+
+# Plots for assessing balance -----------------------------------------------
+
+message("Produce plot to assess covariate balance")
+(love.plot <- love.plot(weighting,
+                          threshold = c(m = threshold),
+                          drop.distance = TRUE,
+                          stars = "raw",
+                          abs = TRUE,
+                          grid = FALSE,
+                          wrap = 100,
+                          sample.names = c("Unweighted", "Weighted"),
+                          position = "top",
+                          shapes = c("circle", "triangle"),
+                          colors = c(BM.blue, BM.pink),
+                          var.names = data.frame(t(column_to_rownames(formatted.names, 'name')))
+                        ) +
+  ggtitle("") +
+  xlab("Absolute standardized mean differences") +
+  theme(legend.title = element_blank(),
+        axis.title = element_text(size=14),
+        axis.text = element_text(size=12),
+        title = element_text(size = 14),
+        legend.text = element_text(size = 12)))
+
+jpeg(file.path(res.dir, "Plots/Covariate balance Love plot.jpg"), width = 20, height = 15,
+     units = 'cm', res = 300, quality=100)
+love.plot
+graphics.off()
+
+
+message("Produce balance plots for binary characteristics")
+
+# Balance plots data - categorical
+balance.plot.data.cat <- base.summ.all %>%
+  select(-ends_with("mean")) %>%
+  pivot_longer(cols = ends_with("bin")) %>%
+  mutate(name = sub("_bin", "", name)) %>%
+  left_join(formatted.names, by = "name") %>%
+  mutate(input.var = gsub("\\_.*","", name),
+         var = gsub("\\ .*","", formatted),
+         level = sub(".*\\(","", formatted),
+         level = sub(")","", level))
+
+balance.plot.data.cat[balance.plot.data.cat$Analysis == "Unweighted",]$Analysis <- "Before weighting"
+balance.plot.data.cat[balance.plot.data.cat$Analysis == "Weighted",]$Analysis <- "After weighting"
+
+
+for(i in 1:length(Categorical.characteristics)){
+  
+  bal.plot.var <- filter(balance.plot.data.cat, input.var == Categorical.characteristics[i])
+  bal.plot.var$Analysis <- factor(bal.plot.var$Analysis, levels = c("Before weighting", "After weighting"))
+  message(paste0("Produce ", unique(bal.plot.var$var)," balance plot"))
+  
+  bal.plot <- ggplot(bal.plot.var) +
+    geom_col(aes(x = formatted, y = value, fill = Group), position = "dodge",
+             alpha = 0.6, color = "black") +
+    scale_x_discrete(name = unique(bal.plot.var$var),
+                     labels = unique(bal.plot.var$level)) +
+    scale_fill_manual(values = c(BM.blue, BM.pink)) +
+    scale_color_manual(values = c(BM.blue, BM.pink)) +
+    ylab("Proportion of patients (%)") +
+    facet_wrap("Analysis") +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          axis.title = element_text(size=14),
+          axis.text = element_text(size=10),
+          title = element_text(size = 14),
+          legend.text = element_text(size = 12),
+          strip.text = element_text(size = 12),
+          panel.spacing.x = unit(5, "mm"))
+  
+  jpeg(file.path(res.dir, paste0("Plots/Balance plot_", unique(bal.plot.var$var),".jpg")),
+       width = 25, height = 15,
+       units = 'cm', res = 300, quality=100)
+  print(bal.plot)
+  dev.off()
+  
+}
+
+
+message("Produce density plots for continuous characteristics")
+
+# Balance plots data - continuous
+balance.plot.data.con <- df.weights.output %>%
+  select(Group, Continuous.characteristics, wt) %>%
+  mutate(Analysis = "Weighted") %>%
+  rbind(select(df.weights.output, Group, Continuous.characteristics, wt) %>%
+          mutate(Analysis = "Unweighted",
+                 wt = 1))
+
+balance.plot.data.con[balance.plot.data.con$Analysis == "Unweighted",]$Analysis <- "Before weighting"
+balance.plot.data.con[balance.plot.data.con$Analysis == "Weighted",]$Analysis <- "After weighting"
+balance.plot.data.con$Analysis <- factor(balance.plot.data.con$Analysis, levels = c("Before weighting", "After weighting"))
+
+
+for(i in 1:length(Continuous.characteristics)){
+  
+  name <- filter(formatted.names, name == Continuous.characteristics[i])$formatted
+  message(paste0("Produce ", name," density plot"))
+  
+  bal.plot <- ggplot(balance.plot.data.con, aes_string(x = Continuous.characteristics[i], weights = "wt")) +
+    geom_density(aes(fill = Group), alpha = 0.4, position="identity", color = "black") +
+    scale_fill_manual(values = c(BM.blue, BM.pink)) +
+    xlab(name) +
+    ylab("Density") +
+    theme_bw() +
+    theme(legend.title = element_blank(),
+          axis.title = element_text(size=14),
+          axis.text = element_text(size=12),
+          title = element_text(size = 14),
+          legend.text = element_text(size = 12),
+          strip.text = element_text(size = 12),
+          panel.spacing.x = unit(5, "mm")) +
+    facet_wrap("Analysis")
+  
+  jpeg(file.path(res.dir, paste0("Plots/Balance plot_", name,".jpg")),
+       width = 25, height = 15,
+       units = 'cm', res = 300, quality=100)
+  print(bal.plot)
+  dev.off()
+  
+}
+
