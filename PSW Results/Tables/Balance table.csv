@@ -1,0 +1,5 @@
+"Characteristic","Type","Unadjusted Difference","Unadjusted Mean Balance","Unadjusted Variance Ratio Balance","Adjusted Difference","Adjusted Mean Balance","Adjusted Variance Ratio Balance"
+"Sex","Binary",-0.293333333333333,"Not Balanced, >0.1","",0.00342865038457474,"Balanced, <0.1",""
+"Smoke","Binary",0.113333333333333,"Not Balanced, >0.1","",0.00161682518540301,"Balanced, <0.1",""
+"Age","Contin.",0.473098405201375,"Not Balanced, >0.1","Balanced, <2",0.0540422573925222,"Balanced, <0.1","Balanced, <2"
+"prop.score",NA,NA,NA,NA,0.0245771081283196,"Balanced, <0.1","Balanced, <2"
