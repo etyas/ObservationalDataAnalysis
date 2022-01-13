@@ -1,0 +1,5 @@
+"Group","N/ESS","Sex_0_bin","Sex_1_bin","Smoke_0_bin","Smoke_1_bin","Age_mean","wt","Analysis"
+"TRTA",100,38,62,88,12,36.13,1,"Unweighted"
+"TRTC",150,67.33,32.67,76.67,23.33,40.41,0.66,"Unweighted"
+"TRTA",100,38,62,88,12,36.13,1,"Weighted"
+"TRTC",87.7,37.66,62.34,87.84,12.16,36.62,1.13,"Weighted"
